@@ -1,0 +1,26 @@
+apiVersion: sync.example.com/v1alpha1
+kind: ConfigMapSync
+metadata:
+  name: configmapsync-sample
+  namespace: default
+spec:
+  sourceConfigMap: source-config
+  targetNamespaces:
+    - dev
+    - test
+    - staging
+  labels:
+    managed-by: configmap-sync
+    environment: shared
+---
+# Source ConfigMap that will be synced
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: source-config
+  namespace: default
+data:
+  database.properties: |
+    host=db.example.com
+    port=5432
+    max_connections=100
