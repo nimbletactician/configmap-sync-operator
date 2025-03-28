@@ -1,61 +1,124 @@
-The configmap-operator is a Kubernetes operator for managing ConfigMaps by
-  synchronizing them from various external sources. Let me break down the
-  controller flow:
+- The ConfigMapSourceReconciler struct is defined with the Kubernetes client, scheme, and logger.
 
-  Custom Resource Definition
+  Lines 46-189: Reconcile function
 
-  - ConfigMapSource: Defines where to pull configuration from and where to
-  store it
-  - Supported sources:
-    - Git repositories (with SSH authentication)
-    - Files on the operator's filesystem
-    - Existing ConfigMaps
-    - Kubernetes Secrets
+  This is the main reconciliation function, executed when ConfigMapSource resources change:
 
-  Controller Flow
+  1. Line 48-49: Gets a logger and logs reconciliation start
+  2. Lines 52-62: Fetches the ConfigMapSource instance
+    - If not found (deleted), returns with no error
+    - If other error, returns with error to requeue
+  3. Lines 64-72: Adds a finalizer
+    - Checks if finalizer exists, adds if needed
+    - Updates the resource and requeues for further processing
+  4. Lines 74-77: Handles deletion
+    - If deletion timestamp is set, calls reconcileDelete
+  5. Lines 79-83: Sets target namespace
+    - Uses specified target namespace or defaults to same namespace
+  6. Lines 85-100: Fetches configuration data
+    - Calls fetchConfigData to get data from the source
+    - If fetch fails, updates status condition to reflect failure
+    - Returns with error and requeues after one minute
+  7. Lines 102-118: Checks if configuration changed
+    - Calculates hash of configuration data
+    - If hash matches last sync hash, updates only timestamp and requeues
+    - No data update when unchanged to avoid unnecessary updates
+  8. Lines 120-142: Gets or initializes target ConfigMap
+    - Tries to get existing ConfigMap
+    - If not found, initializes a new empty ConfigMap
+  9. Lines 144-168: Updates or creates target ConfigMap
+    - For existing ConfigMap: updates data, calls Update
+    - For new ConfigMap:
+        - Sets data
+      - Sets owner reference if in same namespace
+      - Calls Create
+  10. Lines 170-183: Updates status info
+    - Sets last sync time and hash
+    - Updates status condition to "Ready: True"
+    - Updates the resource status
+  11. Line 187-188: Requeues based on refresh interval
 
-  1. Initialization:
-    - Controller watches for ConfigMapSource resources
-    - Sets up RBAC permissions to manage ConfigMaps and read Secrets
-  2. Reconciliation Loop:
-    - Triggered when ConfigMapSource resources are created/updated/deleted
-    - Adds a finalizer to handle cleanup on deletion
-  3. Main Processing Flow:
-    - Handle deletion if resource is being deleted
-    - Determine target namespace (use source namespace if not specified)
-    - Fetch configuration data from specified source
-    - Calculate hash of config data for change detection
-    - Skip update if configuration hasn't changed
-    - Create or update target ConfigMap with fetched data
-    - Set owner reference if in same namespace (for garbage collection)
-    - Update status with sync time, hash, and success condition
-    - Requeue based on refresh interval for periodic updates
-  4. Source-specific Fetching Logic:
-    - Git: Clones repository, optionally uses SSH auth from a Secret
-    - File: Reads configuration from local filesystem
-    - ConfigMap: Copies data from an existing ConfigMap (optionally filtering
-  keys)
-    - Secret: Copies data from a Secret (optionally filtering keys)
-  5. Deletion Handling:
-    - Only deletes the target ConfigMap if it's in the same namespace and owned
-   by this resource
-    - Removes finalizer to allow Kubernetes to complete deletion
-  6. Utilities:
-    - readConfigFiles: Reads configuration from files (supports directory of
-  files or single file)
-    - calculateConfigHash: Creates consistent hash for change detection
-    - setStatusCondition: Updates resource status conditions
-    - requeueBasedOnRefreshInterval: Schedules periodic reconciliation
+  Lines 191-239: reconcileDelete function
 
-  Key Features
+  Handles deletion of ConfigMapSource resources:
 
-  - Change detection using content hashing
-  - Periodic synchronization with configurable intervals
-  - Support for multiple configuration sources
-  - Proper cleanup of owned resources
-  - Status tracking with conditions
-  - Cross-namespace support with ownership tracking
+  1. Lines 196-200: Gets target namespace
+  2. Lines 202-228: Deletes owned ConfigMap if appropriate
+    - Only deletes if in same namespace
+    - Only deletes if owned by this ConfigMapSource
+  3. Lines 230-235: Removes finalizer to allow deletion
+  4. Lines 237-238: Logs success and returns
 
-  The controller follows the Kubernetes operator pattern, watching resources
-  and maintaining the desired state by reconciling the actual state with the
-  desired state defined in the ConfigMapSource resources.
+  Lines 241-255: fetchConfigData function
+
+  Dispatches to appropriate source-specific fetch method:
+  - Git repository
+  - File
+  - ConfigMap
+  - Secret
+
+  Lines 257-327: fetchFromGit function
+
+  Fetches configuration from a Git repository:
+  1. Validates Git source configuration
+  2. Creates a temporary directory
+  3. Sets up SSH authentication if needed
+  4. Clones the repository
+  5. Reads configuration files from specified path
+
+  Lines 329-338: fetchFromFile function
+
+  Reads configuration from a local file or directory
+
+  Lines 340-381: fetchFromConfigMap function
+
+  Copies data from an existing ConfigMap:
+  1. Gets source namespace
+  2. Fetches source ConfigMap
+  3. Filters keys if specified or copies all data
+
+  Lines 383-424: fetchFromSecret function
+
+  Similar to ConfigMap, but for Secret resources:
+  1. Gets source namespace
+  2. Fetches source Secret
+  3. Filters keys if specified or copies all data
+  4. Converts binary data to string
+
+  Lines 426-468: readConfigFiles function
+
+  Reads configuration files:
+  1. Checks if path is a file or directory
+  2. For directory: reads all files, using filenames as keys
+  3. For file: reads content, using basename as key
+
+  Lines 470-488: calculateConfigHash function
+
+  Creates a hash for change detection:
+  1. Sorts keys for consistent hashing
+  2. Hashes each key-value pair
+  3. Returns hex-encoded hash
+
+  Lines 490-499: requeueBasedOnRefreshInterval function
+
+  Determines when to requeue for periodic updates:
+  1. If interval specified and greater than 0, returns RequeueAfter
+  2. Otherwise, no automatic refresh
+
+  Lines 501-528: setStatusCondition function
+
+  Updates status conditions:
+  1. Initializes conditions array if needed
+  2. Finds existing condition by type
+  3. Updates timestamp and generation
+  4. Updates existing condition or adds new one
+
+  Lines 530-538: isOwnedBy function
+
+  Checks if a ConfigMap is owned by a specific ConfigMapSource
+
+  Lines 540-546: SetupWithManager function
+
+  Configures the controller with controller-runtime:
+  1. Sets it to watch ConfigMapSource resources
+  2. Sets it to watch owned ConfigMap resources
